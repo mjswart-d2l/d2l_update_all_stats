@@ -1,6 +1,8 @@
-CREATE PROCEDURE dbo.cs_CUSTOM_D2L_StatsUpdate
+use msdb;
+GO
+ALTER PROCEDURE dbo.cs_CUSTOM_D2L_StatsUpdate
   @DBName SYSNAME,
-  @JobName SYSNAME
+  @JobName SYSNAME = 'IT Update Stats'
 AS
 
 SET NOCOUNT ON
@@ -15,16 +17,6 @@ SELECT TOP 1 @stats_rows_changed_threshold = CAST(ConfigValue AS INT)
    AND ConfigName = 'stats_rows_changed_threshold'
  ORDER BY CASE WHEN DatabaseName = @DBName THEN 0 ELSE 1 END ASC;
 
---This is a default sample rate/percentage we use for any stats created on a
--- table with more than @stats_rows_count_threshold " rows changed
-DECLARE @default_stats_sample_size INT;
-SELECT TOP 1 @default_stats_sample_size = CAST(ConfigValue AS INT)
-  FROM msdb.dbo.D2LJobsConfigValues
- WHERE DatabaseName IN (@DBName, 'DefaultValue')
-   AND JobName = @JobName 
-   AND ConfigName = 'default_stats_sample_size'
- ORDER BY CASE WHEN DatabaseName = @DBName THEN 0 ELSE 1 END ASC;
-
 --Number of days since last update to trigger stats update in combination with
 -- @stats_rows_changed_threshold" rows changed
 DECLARE @stats_age_threshold_days INT;
@@ -36,7 +28,8 @@ SELECT TOP 1 @stats_age_threshold_days = CAST(ConfigValue AS INT)
  ORDER BY CASE WHEN DatabaseName = @DBName THEN 0 ELSE 1 END ASC;
 
 --Number of rows to determine if  FULL SAMPLE scan should be used. Less than
--- this value means FULL SAMPLE otherwise SAMPLE = @default_stats_sample_size
+-- this value means FULL SAMPLE otherwise let SQL Server determine default 
+-- sample rate
 DECLARE @stats_rows_count_threshold INT;
 SELECT TOP 1 @stats_rows_count_threshold = CAST(ConfigValue AS INT)
   FROM msdb.dbo.D2LJobsConfigValues
@@ -147,7 +140,6 @@ exec sp_executesql @stmt = @CollectStatsCmd,
 -----------------Process D2LStatsUpdateHistory Table------------------
 DECLARE @SchemaN SYSNAME
 DECLARE @TableN SYSNAME
-DECLARE @IndexN SYSNAME
 DECLARE @StatsId INT
 DECLARE @StatsN SYSNAME
 DECLARE @ObjectId INT
@@ -158,7 +150,6 @@ DECLARE cStats CURSOR FOR
 	SELECT TableName,	
 	       TableSchema, 
 		   ObjectId, 
-		   IndexName,	
 		   StatsId, 
 		   StatsName, 
 		   RowsCount 
@@ -173,22 +164,29 @@ FETCH NEXT FROM cStats
 	INTO @TableN, 
 		 @SchemaN, 
 		 @ObjectId , 
-		 @IndexN, 
 		 @StatsId, 
 		 @StatsN, 
 		 @RowsC;
 
 WHILE ( @@FETCH_STATUS = 0 )
 BEGIN
-  DECLARE @Percentage NVARCHAR(5);
-  SET @Percentage = CASE 
-                      WHEN @RowsC > @stats_rows_count_threshold 
-                           THEN CAST(@default_stats_sample_size AS NVARCHAR(5))
-                      ELSE CAST(100 AS NVARCHAR(5))
-                    END;
-  SET @CurrentUpdateStatsCmd = 'USE ' + @DBName + ';
-    UPDATE STATISTICS ' + QUOTENAME(@SchemaN) + '.' + QUOTENAME(@TableN) + '(' + QUOTENAME(@StatsN) + ') 
-      WITH SAMPLE ' + @Percentage + ' PERCENT;';
+    IF (@RowsC > @stats_rows_count_threshold)
+    BEGIN
+      SET @CurrentUpdateStatsCmd = 'USE ' + @DBName + '; 
+            UPDATE STATISTICS ' 
+            + QUOTENAME(@SchemaN) + '.' 
+            + QUOTENAME(@TableN) 
+            + '(' + QUOTENAME(@StatsN) + ');';
+    END
+    ELSE
+    BEGIN
+      SET @CurrentUpdateStatsCmd = 'USE ' + @DBName + '; 
+            UPDATE STATISTICS ' 
+            + QUOTENAME(@SchemaN) + '.' 
+            + QUOTENAME(@TableN) 
+            + '(' + QUOTENAME(@StatsN) + ')
+            WITH SAMPLE 100 PERCENT;';
+    END
 
 	--Update the start time
 	UPDATE msdb.dbo.D2LStatsUpdateHistory
@@ -209,14 +207,12 @@ BEGIN
 	   AND TableName = @TableN
 	   AND StatsName = @StatsN
 	   AND DatabaseName = @DBName
-	   AND ObjectId = @ObjectId
-	   AND TimeStarted = @TimeStartedTemp;
+	   AND ObjectId = @ObjectId;
 
 	FETCH NEXT FROM cStats 
 	INTO @TableN, 
 		 @SchemaN, 
 		 @ObjectId , 
-		 @IndexN, 
 		 @StatsId, 
 		 @StatsN, 
 		 @RowsC;
