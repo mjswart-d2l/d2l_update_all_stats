@@ -188,12 +188,15 @@ BEGIN
             + QUOTENAME(@TableN) 
             + '(' + QUOTENAME(@StatsN) + ');';
     END
-	ELSE IF (@RowsC > @stats_rows_count_threshold AND EXISTS(SELECT 1 FROM sys.Indexes WHERE object_id = @ObjectId))
-	BEGIN
-	  SET @CurrentUpdateStatsCmd = 'USE ' + @DBName + ';
-			UPDATE STATISTICS ' + QUOTENAME(@SchemaN) + '.' + QUOTENAME(@TableN) + '(' + QUOTENAME(@StatsN) + ') 
-			WITH SAMPLE ' + CAST(@default_stats_sample_size AS NVARCHAR(5)) + ' PERCENT;';
-	END
+    ELSE IF (@RowsC > @stats_rows_count_threshold AND EXISTS(SELECT 1 FROM sys.Indexes WHERE object_id = @ObjectId))
+    BEGIN
+      SET @CurrentUpdateStatsCmd = 'USE ' + @DBName + ';
+            UPDATE STATISTICS '
+            + QUOTENAME(@SchemaN) + '.'
+            + QUOTENAME(@TableN)
+            + '(' + QUOTENAME(@StatsN) + ') 
+            WITH SAMPLE ' + CAST(@default_stats_sample_size AS NVARCHAR(5)) + ' PERCENT;';
+    END
     ELSE
     BEGIN
       SET @CurrentUpdateStatsCmd = 'USE ' + @DBName + '; 
