@@ -46,6 +46,16 @@ SELECT TOP 1 @stats_HistoryKeepThreshold = CAST(ConfigValue AS INT)
    AND JobName = @JobName 
    AND ConfigName = 'stats_HistoryKeepThreshold'
  ORDER BY CASE WHEN DatabaseName = @DBName THEN 0 ELSE 1 END ASC;
+ 
+ --This is a default sample rate/percentage we use for any stats created on a
+-- table with more than @stats_rows_count_threshold " rows changed
+DECLARE @default_stats_sample_size INT;
+SELECT TOP 1 @default_stats_sample_size = CAST(ConfigValue AS INT)
+  FROM msdb.dbo.D2LJobsConfigValues
+ WHERE DatabaseName IN (@DBName, 'DefaultValue')
+   AND JobName = @JobName 
+   AND ConfigName = 'default_stats_sample_size'
+ ORDER BY CASE WHEN DatabaseName = @DBName THEN 0 ELSE 1 END ASC;
 
 DECLARE @CollectStatsCmd NVARCHAR(MAX)
 DECLARE @ErrorMessage NVARCHAR(MAX)
@@ -170,13 +180,22 @@ FETCH NEXT FROM cStats
 
 WHILE ( @@FETCH_STATUS = 0 )
 BEGIN
-    IF (@RowsC > @stats_rows_count_threshold)
+    IF (@RowsC > @stats_rows_count_threshold AND NOT EXISTS(SELECT 1 FROM sys.Indexes WHERE object_id = @ObjectId))
     BEGIN
       SET @CurrentUpdateStatsCmd = 'USE ' + @DBName + '; 
             UPDATE STATISTICS ' 
             + QUOTENAME(@SchemaN) + '.' 
             + QUOTENAME(@TableN) 
             + '(' + QUOTENAME(@StatsN) + ');';
+    END
+    ELSE IF (@RowsC > @stats_rows_count_threshold AND EXISTS(SELECT 1 FROM sys.Indexes WHERE object_id = @ObjectId))
+    BEGIN
+      SET @CurrentUpdateStatsCmd = 'USE ' + @DBName + ';
+            UPDATE STATISTICS '
+            + QUOTENAME(@SchemaN) + '.'
+            + QUOTENAME(@TableN)
+            + '(' + QUOTENAME(@StatsN) + ') 
+            WITH SAMPLE ' + CAST(@default_stats_sample_size AS NVARCHAR(5)) + ' PERCENT;';
     END
     ELSE
     BEGIN
