@@ -155,6 +155,9 @@ DECLARE @StatsN SYSNAME
 DECLARE @ObjectId INT
 DECLARE @RowsC BIGINT
 DECLARE @TimeStartedTemp DATETIME
+DECLARE @IsIndexStat BIT
+DECLARE @CurrentGetIsSystemStatCommand NVARCHAR(max)
+DECLARE @ParmDefinition NVARCHAR(500);
 
 DECLARE cStats CURSOR FOR
 	SELECT TableName,	
@@ -180,7 +183,21 @@ FETCH NEXT FROM cStats
 
 WHILE ( @@FETCH_STATUS = 0 )
 BEGIN
-    IF (@RowsC > @stats_rows_count_threshold AND NOT EXISTS(SELECT 1 FROM sys.Indexes WHERE object_id = @ObjectId))
+	--Determine if current stat is based on an index
+	SET @CurrentGetIsSystemStatCommand = 'USE ' + @DBName + ';
+		IF EXISTS (SELECT 1 FROM sys.Indexes WHERE name = '''
+		+ @StatsN + ''')
+		BEGIN
+			SET @RetVal = 1;
+		END
+		ELSE
+		BEGIN
+			SET @RetVal = 0
+		END'
+	SET @ParmDefinition = N'@RetVal BIT OUTPUT';
+	EXEC sp_executesql @CurrentGetIsSystemStatCommand, @ParmDefinition, @RetVal=@IsIndexStat OUTPUT;
+
+    IF (@RowsC > @stats_rows_count_threshold AND @IsIndexStat = 0)
     BEGIN
       SET @CurrentUpdateStatsCmd = 'USE ' + @DBName + '; 
             UPDATE STATISTICS ' 
@@ -188,7 +205,7 @@ BEGIN
             + QUOTENAME(@TableN) 
             + '(' + QUOTENAME(@StatsN) + ');';
     END
-    ELSE IF (@RowsC > @stats_rows_count_threshold AND EXISTS(SELECT 1 FROM sys.Indexes WHERE object_id = @ObjectId))
+    ELSE IF (@RowsC > @stats_rows_count_threshold AND @IsIndexStat = 1)
     BEGIN
       SET @CurrentUpdateStatsCmd = 'USE ' + @DBName + ';
             UPDATE STATISTICS '
